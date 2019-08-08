@@ -2,15 +2,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pysam 
 import click
-import chunk
-import reads
 import gffutils
 import os
 import logging as log
 import pyfaidx
 import tqdm
+import deepstab
 
 
+"""
 # Obviously I still have the defaults set for me right now...
 @click.command()
 @click.option("--db_file", default = "../db/test.db", help="Path to database file, if it exists.")
@@ -21,9 +21,10 @@ import tqdm
 @click.option("--out", default = "gamma_and_utr.txt.gz")
 @click.option("--intron_lengths/--no_intron_lengths", default = False)
 @click.option("--chrom", default = 99, help="OPTIONAL. If you would like to subset the data and process only one chromosome, indicate it here. This will append _chr${CHROM} to your database name.")
+"""
 
 
-def main(db_file, gtf, bam, bamlist,fasta, out, chrom, intron_lengths):
+def process_bam(db_file, gtf, fasta, bam=None, bamlist=None, out='gamma_and_utr.txt.gz', chrom=99, intron_lengths=False):
 
     log.getLogger().setLevel(log.INFO)
 
@@ -40,7 +41,7 @@ def main(db_file, gtf, bam, bamlist,fasta, out, chrom, intron_lengths):
          
     if bam is not None and bamlist is None:
         bam_file = pysam.AlignmentFile(bam, "rb")
-        read = reads.reads(bam_file)
+        read = deepstab.reads(bam_file)
 
         fa = pyfaidx.Fasta(fasta)
 
@@ -78,12 +79,3 @@ def main(db_file, gtf, bam, bamlist,fasta, out, chrom, intron_lengths):
         tissues.write(out)
     else:
         raise("Improper combination of bam and bamfile arguements.")
-
-
-            
-
-if __name__=='__main__':
-    main()
-
-
-

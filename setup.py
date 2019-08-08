@@ -1,7 +1,16 @@
-from distutils.core import setup
+fom distutils.core import setup
 
 setup(
-        name='DeepStab',
+        name='deepstab',
         version='0.1a',
-        packages=['deepstab',],
+        packages=['deepstab'],
+        install_requires=[
+            'numpy',
+            'matplotlib',
+            'pysam',
+            'click',
+            'gffutils',
+            'pyfaidx',
+            'tqdm'
+        ]
 )
