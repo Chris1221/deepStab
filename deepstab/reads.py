@@ -108,6 +108,49 @@ class reads:
             if self.exon_coordinates[i+1][0] - self.exon_coordinates[i][1] > 0:
                 self.intron_coordinates.append( (self.exon_coordinates[i][1], self.exon_coordinates[i+1][0] ) )
 
+    def transcript_to_annotated_sequence(self, transcript, db, fa):
+        """Given the name of a trasncsritp (from the nxt function), add up all the sequences of its constitutent portions and annotate it with a code to dednote whether it is an exon, intrn, utr, etc.
+
+        I'm also forced to infer introns on the fly to get the annotations. Not perfect. It doesnt catch the case of introns at the end...
+
+        I also would like to include the information about which portions are coding. I don't know how to ddo tat right now."""
+        tx_sequence = db[transcript].sequence(fa) 
+        
+        was_exon = False
+
+        start = db[transcript].start
+        end = db[transcript].end
+
+        
+        annotations = ['?']*(end-start+1)
+        
+        for feature in db.children(transcript, order_by = 'start'):
+            
+            ft = feature.featuretype
+            fs = feature.start - start
+            fe = feature.end - start
+            
+            if ft == "transcript": 
+                code = "I"
+            elif ft == "CDS":
+                code = "C"
+            elif ft == "five_prime_utr": 
+                code = '5'
+            elif ft == "three_prime_utr":
+                code = '3'
+            elif ft == "start_codon":
+                code = "S"
+            elif ft == "exon":
+                code = 'E'
+            elif ft == "stop_codon":
+                code = "s"
+              
+            annotations[fs:fe] = code*(fe-fs)
+
+        assert(len(annotations) == len(tx_sequence))
+        return (''.join(annotations), tx_sequence)
+
+
     def add_utr_and_gamma(self, db, fa, return_intron_length = False):
         self.gammas = []
         
@@ -128,6 +171,8 @@ class reads:
                         for tpu in db.children(transcript, featuretype="three_prime_utr"):
                             three_prime_utrs += tpu.sequence(fa)
 
+                        annotation, whole_transcript_sequence = self.transcript_to_annotated_sequence(transcript, db, fa) 
+
                         if return_intron_length:
                             self.gammas.append([
                                     chrom, 
@@ -138,9 +183,11 @@ class reads:
                                     self.counts[gene][transcript].spliced / self.counts[gene][transcript].unspliced,
                                     self.lengths[gene][transcript].total_intron_length, 
                                     five_prime_utrs,
-                                    three_prime_utrs])
+                                    three_prime_utrs,
+                                    whole_transcript_sequence,
+                                    annotation])
                             self.gdf = pd.DataFrame(self.gammas, 
-                                    columns = ['chr', 'gene', 'transcript', 'spliced', 'unspliced', 'gamma', 'total_intron_length', 'utr5', 'utr3'])
+                                    columns = ['chr', 'gene', 'transcript', 'spliced', 'unspliced', 'gamma', 'total_intron_length', 'utr5', 'utr3', 'sequence', 'annotation'])
                             self.gdf.name = os.path.splitext(os.path.basename(self.bam.filename.decode()))[0] 
 
                         else: 
@@ -152,15 +199,17 @@ class reads:
                                     self.counts[gene][transcript].unspliced,
                                     self.counts[gene][transcript].spliced / self.counts[gene][transcript].unspliced,
                                     five_prime_utrs,
-                                    three_prime_utrs])
+                                    three_prime_utrs,
+                                    whole_transcript_sequence,
+                                    annotation])
                             self.gdf = pd.DataFrame(self.gammas, 
-                                    columns = ['chr', 'gene', 'transcript', 'spliced', 'unspliced', 'gamma', 'utr5', 'utr3'])
+                                    columns = ['chr', 'gene', 'transcript', 'spliced', 'unspliced', 'gamma', 'utr5', 'utr3', 'sequence', 'annotation'])
                             self.gdf.name = os.path.splitext(os.path.basename(self.bam.filename.decode()))[0] 
 
 
     def write(self, path):
         out = self.gdf
-        out.to_csv(path, sep="\t",header=False,index=False, mode = 'a')
+        out.to_csv(path, sep="\t",header=True,index=False, mode = 'a')
 
 class meta_reads:
     def __init__(self, readlist):

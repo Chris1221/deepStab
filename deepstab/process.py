@@ -8,6 +8,7 @@ import logging as log
 import pyfaidx
 import tqdm
 import deepstab
+import pdb
 
 
 """
@@ -47,9 +48,10 @@ def process_bam(db_file, gtf, fasta, bam=None, bamlist=None, out='gamma_and_utr.
 
         log.info("Starting the main counting loop")
         # This is just the number from the grep.
-        length = 58826
+        length = len(list(db.features_of_type('gene')))
         for gene in tqdm.tqdm(db.features_of_type('gene', order_by='start'), total = length):
             for transcript in db.children(gene, featuretype="transcript", order_by='start'):
+                #pdb.set_trace()
                 read.count_reads(db, gene, transcript, return_intron_length = intron_lengths)
                 
         log.info("Adding in the UTRs and calculating gamma")
@@ -70,6 +72,7 @@ def process_bam(db_file, gtf, fasta, bam=None, bamlist=None, out='gamma_and_utr.
                 length = 58826
                 for gene in tqdm.tqdm(db.features_of_type('gene', order_by='start'), total = length):
                     for transcript in db.children(gene, featuretype="transcript", order_by='start'):
+                        pdb.set_trace()
                         read.count_reads(db, gene, transcript, return_intron_length = intron_lengths) 
                 log.info("Adding in the UTRs and calculating gamma")
                 read.add_utr_and_gamma(db, fa, return_intron_length = intron_lengths)
