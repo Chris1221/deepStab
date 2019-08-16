@@ -6,6 +6,8 @@ import pdb
 import os
 import pyfaidx
 import functools
+import keras
+import h5py
 
 class count:
     def __init__(self):
@@ -121,7 +123,6 @@ class reads:
         start = db[transcript].start
         end = db[transcript].end
 
-        
         annotations = ['?']*(end-start+1)
         
         for feature in db.children(transcript, order_by = 'start'):
@@ -144,8 +145,10 @@ class reads:
                 code = 'E'
             elif ft == "stop_codon":
                 code = "s"
-              
-            annotations[fs:fe] = code*(fe-fs)
+             
+            # To account for the interval notation in the GTF files.
+            # See sanity checks.
+            annotations[fs:(fe+1)] = code*(fe-fs+1)
 
         assert(len(annotations) == len(tx_sequence))
         return (''.join(annotations), tx_sequence)
@@ -208,10 +211,106 @@ class reads:
 
 
     def write(self, path):
+        """Obviously still works but might be moving towards just converting in line"""
         out = self.gdf
         out.to_csv(path, sep="\t",header=True,index=False, mode = 'a')
 
+
+
+class tf_input:
+    """Create train, test, and validation data."""
+    def __init__(self, read, length=5000):   
+        self.df = read.gdf
+        
+        rows = len(self.df.index)
+        possible_annotations = [
+                "I", # Intron
+                "C", # CDS
+                "5", # 5' UTR
+                "3", # 3' UTR
+                "S", # Start codon
+                "E", # Exon
+                's'] # Stop codon
+
+       # Handle the sequences
+        hot_seqs = np.zeros(( rows, length, 4 ))
+        hot_ann = np.zeros(( rows, length, len(possible_annotations) ))
+
+        padded_seq = keras.preprocessing.sequence.pad_sequences(
+            [list(l) for l in self.df['sequence']],
+            maxlen=length,
+            dtype='str',
+            value = 'P')
+        padded_ann = keras.preprocessing.sequence.pad_sequences(
+            [list(l) for l in self.df['annotation']],
+            maxlen=length,
+            dtype='str',
+            value = 'P')
+
+        for j in range(rows):
+            hot_seqs[j,] = self.get_hot_coded_seq(padded_seq[j])
+            hot_ann[j,] = self.get_hot_coded_annotations(padded_ann[j], possible_annotations)
+
+        self.sequence = np.concatenate( (hot_seqs, hot_ann), 2)
+        self.labels = self.df.gamma.tolist()
+
+        pdb.set_trace()
+
+        print("done")
+
+    def save_all(self, file):
+        with h5py.File(file, 'w') as f:
+            f.create_dataset('seq', data=self.sequence)
+            f.create_dataset('labels', data=self.labels)
+
+    def save_by_chr(self, file):
+        """ This indexing might cause a problem if I do QC and put it in a different object."""
+        for chr in self.df.chr.unique():
+            idx = self.df.query('chr == "'+chr+'"').index.tolist()
+
+            with h5py.File(file, 'w') as f:
+                f.create_dataset(chr+'_seq', data=self.sequence[idx])
+                f.create_dataset(chr+'_labels', data=self.labels[idx])
+
+
+        
+
+    def get_hot_coded_seq(self, sequence):
+        """Convert a 4 base letter sequence to 4-row x-cols hot coded sequence"""
+        hotsequence = np.zeros((len(sequence),4))
+        for i in range(len(sequence)):
+            if sequence[i] == 'A':
+                hotsequence[i,0] = 1
+            elif sequence[i] == 'C':
+                hotsequence[i,1] = 1
+            elif sequence[i] == 'G':
+                hotsequence[i,2] = 1
+            elif sequence[i] == 'T':
+                hotsequence[i,3] = 1
+            elif sequence[i] == 'N':
+                hotsequence[i,0] = 0.25
+                hotsequence[i,1] = 0.25
+                hotsequence[i,2] = 0.25
+                hotsequence[i,3] = 0.25
+            elif sequence[i] == 'P':
+                pass
+        return hotsequence
+
+    def get_hot_coded_annotations(self, annotations, possible_annotations): 
+        codes = [c for c in range(len(possible_annotations))]
+        lookup = dict(zip(possible_annotations, codes)) 
+        hotann = np.zeros(( len(annotations), len(possible_annotations) ))
+        for i in range(len(annotations)):
+            try:
+                hotann[i, lookup[annotations[i]]] = 1
+            except KeyError:
+                continue
+        return hotann
+           
+
+
 class meta_reads:
+    """ This is probably a bit outdated now, need to include the new sequence annotations"""
     def __init__(self, readlist):
         if type(readlist[0]) is not str:
             self.dfs = [read.gdf.drop(columns=['spliced', 'unspliced']) for read in readlist]

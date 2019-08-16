@@ -10,24 +10,9 @@ import tqdm
 import deepstab
 import pdb
 
-
-"""
-# Obviously I still have the defaults set for me right now...
-@click.command()
-@click.option("--db_file", default = "../db/test.db", help="Path to database file, if it exists.")
-@click.option("--gtf", default = "../lib/test.gtf", help="Path to the GTF file.")
-@click.option("--bam", default = None, help="Path to the BAM file.")
-@click.option("--bamlist", default = None, help="Optionally a path to a list of bam files for multi-task learning.")
-@click.option("--fasta", default = "../lib/Homo_sapiens.GRCh38.dna_rm.primary_assembly.fa", help="Path to the FASTA file.")
-@click.option("--out", default = "gamma_and_utr.txt.gz")
-@click.option("--intron_lengths/--no_intron_lengths", default = False)
-@click.option("--chrom", default = 99, help="OPTIONAL. If you would like to subset the data and process only one chromosome, indicate it here. This will append _chr${CHROM} to your database name.")
-"""
-
-
 def process_bam(db_file, gtf, fasta, bam=None, bamlist=None, out='gamma_and_utr.txt.gz', chrom=99, intron_lengths=False):
 
-    log.getLogger().setLevel(log.INFO)
+    log.getLogger().setLevel(log.INFO) 
 
     # Deal with Chromosome request
     if chrom != 99:
@@ -57,7 +42,10 @@ def process_bam(db_file, gtf, fasta, bam=None, bamlist=None, out='gamma_and_utr.
         log.info("Adding in the UTRs and calculating gamma")
         read.add_utr_and_gamma(db, fa, return_intron_length = intron_lengths)
 
-        log.info("Writing to file.")
+        input_data = deepstab.tf_input(read)
+        input_data.save_by_chr('data.h5')
+
+        log.info("Writing to file.") 
         read.write(out)
     elif bam is None and bamlist is not None:
         readlist = [] 
