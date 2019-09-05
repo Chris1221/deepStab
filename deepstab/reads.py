@@ -1,13 +1,11 @@
-import gffutils
-import pysam 
 import numpy as np
 import pandas as pd
 import pdb
-import os
-import pyfaidx
-import functools
-import keras
+import os.path
+from keras.preprocessing import sequence
 import h5py
+from tqdm import tqdm
+from Bio import pairwise2
 
 class count:
     def __init__(self):
@@ -82,7 +80,7 @@ class reads:
         # At most there should be only one True in any list
         assert sum(e_start_idx) <= 1 
         assert sum(e_end_idx) <= 1
-        assert sum(i_start_idx) <= 1
+        #assert sum(i_start_idx) <= 1 # This can actually be true if you have side by side introns...
         assert sum(i_end_idx) <= 1
 
         # If it starts and stops in an exon
@@ -110,12 +108,19 @@ class reads:
             if self.exon_coordinates[i+1][0] - self.exon_coordinates[i][1] > 0:
                 self.intron_coordinates.append( (self.exon_coordinates[i][1], self.exon_coordinates[i+1][0] ) )
 
-    def transcript_to_annotated_sequence(self, transcript, db, fa):
+    def transcript_to_annotated_sequence(self, transcript, db, fa, f, name):
         """Given the name of a trasncsritp (from the nxt function), add up all the sequences of its constitutent portions and annotate it with a code to dednote whether it is an exon, intrn, utr, etc.
 
         I'm also forced to infer introns on the fly to get the annotations. Not perfect. It doesnt catch the case of introns at the end...
 
-        I also would like to include the information about which portions are coding. I don't know how to ddo tat right now."""
+        I also would like to include the information about which portions are coding. I don't know how to ddo tat right now.
+
+        :param transcript: Unique ID of the transcript
+        :param db: A link to the GTF database created using GTFutils 
+        :param fa: Fasta file
+        :param f: File handle of the h5py file used for writing. As of 2/9/19
+        :param name: Name of the dataset to save. As of 2/9/2019
+        """
         tx_sequence = db[transcript].sequence(fa) 
         
         was_exon = False
@@ -149,15 +154,23 @@ class reads:
             # To account for the interval notation in the GTF files.
             # See sanity checks.
             annotations[fs:(fe+1)] = code*(fe-fs+1)
-
+ 
         assert(len(annotations) == len(tx_sequence))
         return (''.join(annotations), tx_sequence)
-
-
-    def add_utr_and_gamma(self, db, fa, return_intron_length = False):
+ 
+    def add_utr_and_gamma(self, db, dset, fa, return_intron_length = False):
         self.gammas = []
+
+        self.possible_annotations = [
+                "I", # Intron
+                "C", # CDS
+                "5", # 5' UTR
+                "3", # 3' UTR
+                "S", # Start codon
+                "E", # Exon
+                's'] # Stop codon
         
-        for gene in self.counts.keys():
+        for gene in tqdm(self.counts.keys(), desc='Annotating'):
             for transcript in self.counts[gene].keys():
                 if self.counts[gene][transcript].unspliced > 0:
                     if self.counts[gene][transcript].spliced > 0:
@@ -174,7 +187,16 @@ class reads:
                         for tpu in db.children(transcript, featuretype="three_prime_utr"):
                             three_prime_utrs += tpu.sequence(fa)
 
-                        annotation, whole_transcript_sequence = self.transcript_to_annotated_sequence(transcript, db, fa) 
+                        with h5py.File(dset) as f:
+                            name = chrom+'/'+transcript
+                            annotation, whole_transcript_sequence = self.transcript_to_annotated_sequence(transcript, db, fa, f, name) 
+                            hot_seq = self.get_hot_coded_seq(whole_transcript_sequence)
+                            hot_annot = self.get_hot_coded_annotations(annotation, self.possible_annotations)
+
+                            seq = np.concatenate( (hot_seq, hot_annot), 1)
+
+                            tx = f.create_dataset(name, data=seq) 
+                            tx.attrs['label'] = self.counts[gene][transcript].unspliced / self.counts[gene][transcript].spliced 
 
                         if return_intron_length:
                             self.gammas.append([
@@ -215,66 +237,6 @@ class reads:
         out = self.gdf
         out.to_csv(path, sep="\t",header=True,index=False, mode = 'a')
 
-
-
-class tf_input:
-    """Create train, test, and validation data."""
-    def __init__(self, read, length=5000):   
-        self.df = read.gdf
-        
-        rows = len(self.df.index)
-        possible_annotations = [
-                "I", # Intron
-                "C", # CDS
-                "5", # 5' UTR
-                "3", # 3' UTR
-                "S", # Start codon
-                "E", # Exon
-                's'] # Stop codon
-
-       # Handle the sequences
-        hot_seqs = np.zeros(( rows, length, 4 ))
-        hot_ann = np.zeros(( rows, length, len(possible_annotations) ))
-
-        padded_seq = keras.preprocessing.sequence.pad_sequences(
-            [list(l) for l in self.df['sequence']],
-            maxlen=length,
-            dtype='str',
-            value = 'P')
-        padded_ann = keras.preprocessing.sequence.pad_sequences(
-            [list(l) for l in self.df['annotation']],
-            maxlen=length,
-            dtype='str',
-            value = 'P')
-
-        for j in range(rows):
-            hot_seqs[j,] = self.get_hot_coded_seq(padded_seq[j])
-            hot_ann[j,] = self.get_hot_coded_annotations(padded_ann[j], possible_annotations)
-
-        self.sequence = np.concatenate( (hot_seqs, hot_ann), 2)
-        self.labels = self.df.gamma.tolist()
-
-        pdb.set_trace()
-
-        print("done")
-
-    def save_all(self, file):
-        with h5py.File(file, 'w') as f:
-            f.create_dataset('seq', data=self.sequence)
-            f.create_dataset('labels', data=self.labels)
-
-    def save_by_chr(self, file):
-        """ This indexing might cause a problem if I do QC and put it in a different object."""
-        for chr in self.df.chr.unique():
-            idx = self.df.query('chr == "'+chr+'"').index.tolist()
-
-            with h5py.File(file, 'w') as f:
-                f.create_dataset(chr+'_seq', data=self.sequence[idx])
-                f.create_dataset(chr+'_labels', data=self.labels[idx])
-
-
-        
-
     def get_hot_coded_seq(self, sequence):
         """Convert a 4 base letter sequence to 4-row x-cols hot coded sequence"""
         hotsequence = np.zeros((len(sequence),4))
@@ -306,7 +268,168 @@ class tf_input:
             except KeyError:
                 continue
         return hotann
-           
+
+
+
+
+
+class tf_input:
+    """Create train, test, and validation data."""
+    def __init__(self, gdf, dset, length=5000):   
+        self.df = self.qc(gdf)
+        self.df = self.df.reset_index()
+        self.dset = dset
+
+        #pdb.set_trace()
+
+        self.batch(self.df, bsize = 32)
+
+
+    def batch(self, df, bsize, chrs = [1]):
+        
+        df['length'] = [len(s) for s in df['sequence']]
+
+        # The chr of interest is the 
+        # TEST set. We will isolate the rest
+        # for training. 
+        for chr in chrs:
+
+            training = df[df['chr'] != f"chr{chr}"].sort_values('length')
+            test = df[df['chr'] == f"chr{chr}"].sort_values('length')
+
+            train_iter = training.groupby(np.arange( len(training)) // bsize)
+            test_iter = test.groupby(np.arange(len(test))//bsize)
+
+            for i, dset in train_iter:
+                seq, label = self.code_all(dset, length = min(max(dset['length']), 50000))
+
+                with h5py.File(self.dset) as f:
+                    f.create_dataset(f"chr_{chr}/train/chunk_{i}_seq", data=seq)
+                    f.create_dataset(f"chr_{chr}/train/chunk_{i}_label", data=label)
+
+            for i, dset in test_iter:
+                seq, label = self.code_all(dset, length = min(max(dset['length']), 50000 ))
+
+                with h5py.File(self.dset) as f:
+                    f.create_dataset(f"chr_{chr}/test/chunk_{i}_seq", data=seq)
+                    f.create_dataset(f"chr_{chr}/test/chunk_{i}_label", data=label)
+
+    def code_all(self, df, length=5000):
+        rows = len(df.index)
+        self.possible_annotations = [
+                "I", # Intron
+                "C", # CDS
+                "5", # 5' UTR
+                "3", # 3' UTR
+                "S", # Start codon
+                "E", # Exon
+                's'] # Stop codon
+
+       # Handle the sequences
+        hot_seqs = np.zeros(( rows, length, 4 ))
+        hot_ann = np.zeros(( rows, length, len(self.possible_annotations) ))
+
+        padded_seq = sequence.pad_sequences(
+            [list(l) for l in df['sequence']],
+            maxlen=length,
+            dtype='str',
+            value = 'P')
+        padded_ann = sequence.pad_sequences(
+            [list(l) for l in df['annotation']],
+            maxlen=length,
+            dtype='str',
+            value = 'P')
+
+        for j in range(rows):
+            hot_seqs[j,] = self.get_hot_coded_seq(padded_seq[j])
+            hot_ann[j,] = self.get_hot_coded_annotations(padded_ann[j], self.possible_annotations)
+
+        seq = np.concatenate( (hot_seqs, hot_ann), 2)
+        labels = df.gamma.tolist()
+ 
+        return(seq, labels)  
+
+    def save_all(self, file):
+        with h5py.File(file, 'w') as f:
+            f.create_dataset('seq', data=self.sequence)
+            f.create_dataset('labels', data=self.labels)
+
+    def save_by_chr(self, file):
+        """ This indexing might cause a problem if I do QC and put it in a different object."""
+        #pdb.set_trace()
+        for chr in self.df.chr.unique():
+            idx = self.df.query('chr == "'+chr+'"').index.tolist()
+            with h5py.File(file) as f:
+                f.create_dataset(chr+'_seq', data=[self.sequence[i] for i in idx])
+                f.create_dataset(chr+'_labels', data=[self.labels[i] for i in idx])
+ 
+    def get_hot_coded_seq(self, sequence):
+        """Convert a 4 base letter sequence to 4-row x-cols hot coded sequence"""
+        hotsequence = np.zeros((len(sequence),4))
+        for i in range(len(sequence)):
+            if sequence[i] == 'A':
+                hotsequence[i,0] = 1
+            elif sequence[i] == 'C':
+                hotsequence[i,1] = 1
+            elif sequence[i] == 'G':
+                hotsequence[i,2] = 1
+            elif sequence[i] == 'T':
+                hotsequence[i,3] = 1
+            elif sequence[i] == 'N':
+                hotsequence[i,0] = 0.25
+                hotsequence[i,1] = 0.25
+                hotsequence[i,2] = 0.25
+                hotsequence[i,3] = 0.25
+            elif sequence[i] == 'P':
+                pass
+        return hotsequence
+
+    def get_hot_coded_annotations(self, annotations, possible_annotations): 
+        codes = [c for c in range(len(possible_annotations))]
+        lookup = dict(zip(possible_annotations, codes)) 
+        hotann = np.zeros(( len(annotations), len(possible_annotations) ))
+        for i in range(len(annotations)):
+            try:
+                hotann[i, lookup[annotations[i]]] = 1
+            except KeyError:
+                continue
+        return hotann
+
+    def qc(self, df):
+        df = df[~df.sequence.isna()]
+        df = df[df.spliced + df.unspliced > 10] # from the RNA seq tutorial.
+        df = df[df.gamma < 20]
+        # This is infeasible now for gene level sequences
+        #df = self.collapse_seq(df, 0.8)
+        
+        #pdb.set_trace()
+        df['total'] = df['spliced'] + df['unspliced']
+        df = df.sort_values('total', ascending = False).groupby('gene').head(2)
+        df.gamma = np.log(df.gamma)
+        #pdb.set_trace()
+        df.reset_index()
+        return(df)
+
+    def collapse_seq(self, df, p):
+        df['dup'] = False
+        for gene in tqdm(df['gene'].unique().tolist(), total= len(df['gene'].unique().tolist()), desc = 'Genes:'):
+            print(gene)
+            for row1 in df[df['gene'] == gene].iterrows():
+                for row2 in df[df['gene'] == gene].iterrows():
+                    if row1[0] != row2[0]:
+                        if not df.loc[row1[0], 'dup'] or df.loc[row2[0], 'dup']:
+                            if self.overlap(row1[1].sequence,row2[1].sequence) > p*len(row1[1].sequence):
+                                pdb.set_trace()
+                                df.loc[row2[0], 5] =  np.mean([row1[1][5], row2[1][5]])
+                                df.loc[row1[0], 'dup'] = True
+        df_out = df[~df['dup']].drop('dup', axis=1)
+        return df_out
+
+    def overlap(self, seq1, seq2):
+        return pairwise2.align.globalxx(seq1, seq2, score_only=True)
+
+
+
 
 
 class meta_reads:
