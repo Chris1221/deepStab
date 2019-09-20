@@ -7,6 +7,7 @@ import sklearn.preprocessing
 from h5py import File
 from itertools import chain
 from random import shuffle
+import ast
 
 
 
@@ -68,82 +69,70 @@ def process(df):
 
 class partition:
     """A container class for holding the relevant information for training the net. Superceeds the models.partition class"""
-    def __init__(self, df, split_by_chr = True, prop = 0.8, output_name = 'new_gamma'):
-        train = range(2,17)
-        valid = range(17, 23)
-        test = [1]
-        partition = {'train': [], 'valid': [], 'test': []}
+    def __init__(self, df=None, split_by_chr = True, prop = 0.8, output_name = 'new_gamma', path = None):
 
-        print("Using " + output_name + " as the output.")
+        if path is None:
+            train = range(2,17)
+            valid = range(17, 23)
+            test = [1]
+            partition = {'train': [], 'valid': [], 'test': []}
 
-        if split_by_chr:
-            partition['train'].extend( ['chr'+str(c) + '/' + tx for c in train for tx in df['db_name'][df['chr'] == 'chr'+str(c)]] )
-            partition['valid'].extend( ['chr'+str(c) + '/' + tx for c in valid for tx in df['db_name'][df['chr'] == 'chr'+str(c)]] )
-            partition['test'].extend( ['chr'+str(c) + '/' + tx for c in test for tx in df['db_name'][df['chr'] == 'chr'+str(c)]] )      
-        else:
-            partition['train'].extend( ['chr'+str(c) + '/' + tx for c in chain(train, valid) for tx in df['db_name'][df['chr'] == 'chr'+str(c)]] )
-            partition['test'].extend( ['chr'+str(c) + '/' + tx for c in test for tx in df['db_name'][df['chr'] == 'chr'+str(c)]] )      
-            shuffle(partition['train'])
-            l = int(np.floor(prop*len(partition['train']) * prop))
-            partition['valid'] = partition['train'][l:]
-            partition['train'] = partition['train'][:l]
-            
+            print("Using " + output_name + " as the output.")
 
-        self.dict = partition
+            if split_by_chr:
+                partition['train'].extend( ['chr'+str(c) + '/' + tx for c in train for tx in df['db_name'][df['chr'] == 'chr'+str(c)]] )
+                partition['valid'].extend( ['chr'+str(c) + '/' + tx for c in valid for tx in df['db_name'][df['chr'] == 'chr'+str(c)]] )
+                partition['test'].extend( ['chr'+str(c) + '/' + tx for c in test for tx in df['db_name'][df['chr'] == 'chr'+str(c)]] )      
+            else:
+                partition['train'].extend( ['chr'+str(c) + '/' + tx for c in chain(train, valid) for tx in df['db_name'][df['chr'] == 'chr'+str(c)]] )
+                partition['test'].extend( ['chr'+str(c) + '/' + tx for c in test for tx in df['db_name'][df['chr'] == 'chr'+str(c)]] )      
+                shuffle(partition['train'])
+                l = int(np.floor(prop*len(partition['train']) * prop))
+                partition['valid'] = partition['train'][l:]
+                partition['train'] = partition['train'][:l]
+                
 
-        self.df = pd.DataFrame([(r[1]['chr'] + '/'+r[1]['db_name'], r[1][output_name]) for c in range(1,23) for r in df[df['chr'] == 'chr'+str(c)].iterrows()], columns = ['Keys', 'Labels'])
+            self.dict = partition
 
-        self.df['partition'] = 'NA'
-        for p in ['train', 'test', 'valid']:
-            for t in tqdm.tqdm(partition[p], desc = p):
-                self.df.loc[self.df['Keys'] == t, 'partition'] = p
+            self.df = pd.DataFrame([(r[1]['chr'] + '/'+r[1]['db_name'], r[1][output_name]) for c in range(1,23) for r in df[df['chr'] == 'chr'+str(c)].iterrows()], columns = ['Keys', 'Labels'])
+
+            self.df['partition'] = 'NA'
+            for p in ['train', 'test', 'valid']:
+                for t in tqdm.tqdm(partition[p], desc = p):
+                    self.df.loc[self.df['Keys'] == t, 'partition'] = p
 
 
 
 
-        #self.train_df = pd.DataFrame([(r[1]['chr'] + '/'+r[1]['db_name'], r[1][output_name]) for c in train for r in df[df['chr'] == 'chr'+str(c)].iterrows()], columns = ['Keys', 'Labels'])
-        #self.valid_df = pd.DataFrame([(r[1]['chr'] + '/'+r[1]['db_name'], r[1][output_name]) for c in valid for r in df[df['chr'] == 'chr'+str(c)].iterrows()], columns = ['Keys', 'Labels'])
-        #self.test_df = pd.DataFrame([(r[1]['chr'] + '/'+r[1]['db_name'], r[1][output_name]) for c in test for r in df[df['chr'] == 'chr'+str(c)].iterrows()], columns = ['Keys', 'Labels'])
-     
-        normalizer = sklearn.preprocessing.StandardScaler().fit(self.df['Labels'][self.df['partition'] == 'train'].values.reshape(-1, 1))
-        self.df.loc[self.df['partition'] == 'train', 'Labels'] = normalizer.transform(self.df.loc[self.df['partition'] == 'train', 'Labels'].values.reshape(-1, 1))
-        self.df.loc[self.df['partition'] == 'valid', 'Labels'] = normalizer.transform(self.df.loc[self.df['partition'] == 'valid', 'Labels'].values.reshape(-1, 1))
-        self.df.loc[self.df['partition'] == 'test', 'Labels'] = normalizer.transform(self.df.loc[self.df['partition'] == 'test', 'Labels'].values.reshape(-1, 1))
+            #self.train_df = pd.DataFrame([(r[1]['chr'] + '/'+r[1]['db_name'], r[1][output_name]) for c in train for r in df[df['chr'] == 'chr'+str(c)].iterrows()], columns = ['Keys', 'Labels'])
+            #self.valid_df = pd.DataFrame([(r[1]['chr'] + '/'+r[1]['db_name'], r[1][output_name]) for c in valid for r in df[df['chr'] == 'chr'+str(c)].iterrows()], columns = ['Keys', 'Labels'])
+            #self.test_df = pd.DataFrame([(r[1]['chr'] + '/'+r[1]['db_name'], r[1][output_name]) for c in test for r in df[df['chr'] == 'chr'+str(c)].iterrows()], columns = ['Keys', 'Labels'])
+         
+            normalizer = sklearn.preprocessing.StandardScaler().fit(self.df['Labels'][self.df['partition'] == 'train'].values.reshape(-1, 1))
+            self.df.loc[self.df['partition'] == 'train', 'Labels'] = normalizer.transform(self.df.loc[self.df['partition'] == 'train', 'Labels'].values.reshape(-1, 1))
+            self.df.loc[self.df['partition'] == 'valid', 'Labels'] = normalizer.transform(self.df.loc[self.df['partition'] == 'valid', 'Labels'].values.reshape(-1, 1))
+            self.df.loc[self.df['partition'] == 'test', 'Labels'] = normalizer.transform(self.df.loc[self.df['partition'] == 'test', 'Labels'].values.reshape(-1, 1))
 
-#        self.valid_df['Labels'] = normalizer.transform(self.valid_df['Labels'].values.reshape(-1, 1))
-#        self.test_df['Labels'] = normalizer.transform(self.test_df['Labels'].values.reshape(-1, 1))
+    #        self.valid_df['Labels'] = normalizer.transform(self.valid_df['Labels'].values.reshape(-1, 1))
+    #        self.test_df['Labels'] = normalizer.transform(self.test_df['Labels'].values.reshape(-1, 1))
 
-        self.norm = normalizer
+            self.norm = normalizer
+
+        else: 
+            self.read(path)
 
     def write(self, path):
-        with File(path) as f:
-            exists = 'train_df' in f or 'valid_df' in f or 'test_df' in f
-            if exists:
-                del f['train_df']
-                del f['valid_df']
-                del f['test_df']
-                del f['dict']
-                f.create_dataset('train_df', data=self.train_df)
-                f.create_dataset('valid_df', data=self.valid_df)
-                f.create_dataset('test_df', data=self.test_df)
-                f.create_dataset('dict', data=self.dict)
+        self.df.to_hdf(path, 'df')
+        with File(path) as f:    
+           f.create_dataset('dict', data=str(self.dict))
 
-            else:
-                f.create_dataset('train_df', data=self.train_df)
-                f.create_dataset('valid_df', data=self.valid_df)
-                f.create_dataset('test_df', data=self.test_df)
-                f.create_dataset('dict', data=self.dict)
-    
+
     def read(self, path): 
-        with File(path) as f:
-            try: 
-                self.dict = f['dict'][()]
-                self.train_df = f['train_df'][()]
-                self.test_df = f['test_df'][()]
-                self.valid_df = f['valid_df'][()]
-            except KeyError:
-                print("You need to make the dataset first!")
+        self.df = pd.read_hdf(path, 'df')
+        with File(path) as f: 
+            self.dict = ast.literal_eval(f['dict'][()])
 
+   
 
 def create_partition(df, db):
     df = create_df(df, db)

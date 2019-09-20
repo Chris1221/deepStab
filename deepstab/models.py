@@ -182,11 +182,11 @@ class DeepSea:
         pool_width=10
         hidden_units=100
         layer_1_filter_size = 8
-        layer_1_filters = 10
+        layer_1_filters = 20
         layer_2_filter_size = 8
-        layer_2_filters=20
+        layer_2_filters=40
         layer_3_filter_size = 8
-        layer_3_filters=40
+        layer_3_filters=80
         #l2_sparsity = 5e-7 ### 1e-6 is also used by the authors
         #l1_sparsity = 1e-8
         l2_sparsity = 0
@@ -502,8 +502,9 @@ class DataGenerator(keras.utils.Sequence):
         return (X, y)
                 
 
-
-
+def save_both(m, p1, name):
+    m.model.save('models/'+name+'.h5')
+    p1.write('models/'+name+'_dset.h5')
 
 
 
