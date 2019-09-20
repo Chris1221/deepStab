@@ -6,6 +6,7 @@ from keras.preprocessing import sequence
 import h5py
 from tqdm import tqdm
 from Bio import pairwise2
+from deepstab.exceptions import NonCoding
 
 class count:
     def __init__(self):
@@ -23,6 +24,7 @@ class reads:
         self.bam = bam
         self.counts = {}
         self.lengths = {}
+        self.fail = {'mapq': 0, 'qcfail': 0}
 
     def count_reads(self, db, gene, transcript, return_intron_length = False):
         """Counts up spliced reads, those strictly matching exons.
@@ -76,30 +78,44 @@ class reads:
 
         i_start_idx =   [e_read[0] >= i_list[0] and e_read[0] <= i_list[1] for i_list in self.intron_coordinates]
         i_end_idx =     [e_read[1] >= i_list[0] and e_read[1] <= i_list[1] for i_list in self.intron_coordinates]
+        #pdb.set_trace()
+
+        if _read.is_qcfail:
+            fail = True 
+            reason = "qcfail"
+        elif _read.mapq < 50:
+            fail = True
+            reason = "mapq"
+        else: 
+            fail = False
+
 
         # At most there should be only one True in any list
         assert sum(e_start_idx) <= 1 
         assert sum(e_end_idx) <= 1
         #assert sum(i_start_idx) <= 1 # This can actually be true if you have side by side introns...
         assert sum(i_end_idx) <= 1
-
-        # If it starts and stops in an exon
-        if any(e_start_idx) and any(e_end_idx):
-            # Then either it's contained within one exon
-            #   or its exon-exon junction.
-            #   Either way, it's evidence for spliced.
-            #       Though I'm still not totally sure why only 1 exon would be evidence of spliced.
-            self.counts[gene_name][transcript_name].spliced += 1
-        elif any(e_start_idx) and any(i_end_idx): 
-            # This is an intron exon boundary, so 
-            #   evidence of unspliced.
-            self.counts[gene_name][transcript_name].unspliced += 1
-        elif any(i_start_idx) and any(i_end_idx): 
-            # This read starts and stops in an exon
-            self.counts[gene_name][transcript_name].unspliced += 1
+        
+        if not fail:
+            # If it starts and stops in an exon
+            if any(e_start_idx) and any(e_end_idx):
+                # Then either it's contained within one exon
+                #   or its exon-exon junction.
+                #   Either way, it's evidence for spliced.
+                #       Though I'm still not totally sure why only 1 exon would be evidence of spliced.
+                self.counts[gene_name][transcript_name].spliced += 1
+            elif any(e_start_idx) and any(i_end_idx): 
+                # This is an intron exon boundary, so 
+                #   evidence of unspliced.
+                self.counts[gene_name][transcript_name].unspliced += 1
+            elif any(i_start_idx) and any(i_end_idx): 
+                # This read starts and stops in an exon
+                self.counts[gene_name][transcript_name].unspliced += 1
+            else:
+                # Something else happened 
+                self.counts[gene_name][transcript_name].ambiguous += 1 
         else:
-            # Something else happened 
-            self.counts[gene_name][transcript_name].ambiguous += 1 
+            self.fail[reason] += 1
 
     def infer_intron(self):
         """To avoid using the gffutils infer_introns, infers it from the exon coordinates instead."""
@@ -121,7 +137,7 @@ class reads:
         :param f: File handle of the h5py file used for writing. As of 2/9/19
         :param name: Name of the dataset to save. As of 2/9/2019
         """
-        tx_sequence = db[transcript].sequence(fa) 
+        tx_sequence = db[transcript].sequence(fa)  
         
         was_exon = False
 
@@ -154,21 +170,85 @@ class reads:
             # To account for the interval notation in the GTF files.
             # See sanity checks.
             annotations[fs:(fe+1)] = code*(fe-fs+1)
+
+        pdb.set_trace()
  
         assert(len(annotations) == len(tx_sequence))
         return (''.join(annotations), tx_sequence)
  
+    def transcript_to_annotated_sequence_v2(self, transcript, db, fa, f, name):
+        """Given the name of a trasncsritp (from the nxt function), add up all the sequences of its constitutent portions and annotate it with a code to dednote whether it is an exon, intrn, utr, etc.
+
+        I'm also forced to infer introns on the fly to get the annotations. Not perfect. It doesnt catch the case of introns at the end...
+
+        I also would like to include the information about which portions are coding. I don't know how to ddo tat right now.
+
+        :param transcript: Unique ID of the transcript
+        :param db: A link to the GTF database created using GTFutils 
+        :param fa: Fasta file
+        :param f: File handle of the h5py file used for writing. As of 2/9/19
+        :param name: Name of the dataset to save. As of 2/9/2019
+        """
+        #tx_sequence = db[transcript].sequence(fa)  
+        sequence = []
+        annotation = []
+        
+        #was_exon = False
+
+        #start = db[transcript].start
+        #end = db[transcript].end
+
+        #annotations = ['?']*(end-start+1)
+        coding = False
+       
+        for feature in db.children(transcript, order_by = 'start'):
+            
+            ft = feature.featuretype
+            #fs = feature.start - start
+            #fe = feature.end - start
+            
+            if ft == "transcript": 
+                code = "I"
+            elif ft == "CDS":
+                code = "C"
+                coding = True
+                #sequence.extend(feature.sequence(fa))
+                #annotation.extend(code*len(feature.sequence(fa)))
+            elif ft == "five_prime_utr": 
+                code = '5'
+                #sequence.extend(feature.sequence(fa))
+                #annotation.extend(code*len(feature.sequence(fa)))
+            elif ft == "three_prime_utr":
+                code = '3'
+                sequence.extend(feature.sequence(fa))
+                annotation.extend(code*len(feature.sequence(fa)))
+            elif ft == "start_codon":
+                code = "S"
+            elif ft == "exon":
+                code = 'E'
+            elif ft == "stop_codon":
+                code = "s"
+             
+            # To account for the interval notation in the GTF files.
+            # See sanity checks.
+            #annotations[fs:(fe+1)] = code*(fe-fs+1)
+
+        #pdb.set_trace()
+
+        if not coding:
+           raise NonCoding("This transcript has no CDS")
+         
+        assert(len(annotation) == len(sequence))
+        return (annotation, sequence)
+ 
+
     def add_utr_and_gamma(self, db, dset, fa, return_intron_length = False):
         self.gammas = []
 
         self.possible_annotations = [
-                "I", # Intron
                 "C", # CDS
                 "5", # 5' UTR
-                "3", # 3' UTR
-                "S", # Start codon
-                "E", # Exon
-                's'] # Stop codon
+                "3"]
         
         for gene in tqdm(self.counts.keys(), desc='Annotating'):
             for transcript in self.counts[gene].keys():
@@ -187,49 +267,56 @@ class reads:
                         for tpu in db.children(transcript, featuretype="three_prime_utr"):
                             three_prime_utrs += tpu.sequence(fa)
 
-                        with h5py.File(dset) as f:
-                            name = chrom+'/'+transcript
-                            annotation, whole_transcript_sequence = self.transcript_to_annotated_sequence(transcript, db, fa, f, name) 
-                            hot_seq = self.get_hot_coded_seq(whole_transcript_sequence)
-                            hot_annot = self.get_hot_coded_annotations(annotation, self.possible_annotations)
+                        if (self.counts[gene][transcript].spliced + self.counts[gene][transcript].unspliced) > 50:
+                            with h5py.File(dset) as f:
+                                name = chrom+'/'+transcript
+                                #pdb.set_trace()
+                                cell_type = os.path.splitext(os.path.basename(self.bam.filename.decode()))[0]
 
-                            seq = np.concatenate( (hot_seq, hot_annot), 1)
+                                try: 
+                                    if name not in f:
 
-                            tx = f.create_dataset(name, data=seq) 
-                            tx.attrs['label'] = self.counts[gene][transcript].unspliced / self.counts[gene][transcript].spliced 
+                                        annotation, whole_transcript_sequence = self.transcript_to_annotated_sequence_v2(transcript, db, fa, f, name)  
+                                        hot_seq = self.get_hot_coded_seq(whole_transcript_sequence)
+                                        hot_annot = self.get_hot_coded_annotations(annotation, self.possible_annotations)
 
-                        if return_intron_length:
-                            self.gammas.append([
-                                    chrom, 
-                                    gene_name,
-                                    transcript_name,
-                                    self.counts[gene][transcript].spliced,
-                                    self.counts[gene][transcript].unspliced,
-                                    self.counts[gene][transcript].spliced / self.counts[gene][transcript].unspliced,
-                                    self.lengths[gene][transcript].total_intron_length, 
-                                    five_prime_utrs,
-                                    three_prime_utrs,
-                                    whole_transcript_sequence,
-                                    annotation])
-                            self.gdf = pd.DataFrame(self.gammas, 
-                                    columns = ['chr', 'gene', 'transcript', 'spliced', 'unspliced', 'gamma', 'total_intron_length', 'utr5', 'utr3', 'sequence', 'annotation'])
-                            self.gdf.name = os.path.splitext(os.path.basename(self.bam.filename.decode()))[0] 
+                                        seq = np.concatenate( (hot_seq, hot_annot), 1)
 
-                        else: 
-                            self.gammas.append([
-                                    chrom, 
-                                    gene_name,
-                                    transcript_name,
-                                    self.counts[gene][transcript].spliced,
-                                    self.counts[gene][transcript].unspliced,
-                                    self.counts[gene][transcript].spliced / self.counts[gene][transcript].unspliced,
-                                    five_prime_utrs,
-                                    three_prime_utrs,
-                                    whole_transcript_sequence,
-                                    annotation])
-                            self.gdf = pd.DataFrame(self.gammas, 
-                                    columns = ['chr', 'gene', 'transcript', 'spliced', 'unspliced', 'gamma', 'utr5', 'utr3', 'sequence', 'annotation'])
-                            self.gdf.name = os.path.splitext(os.path.basename(self.bam.filename.decode()))[0] 
+                                        tx = f.create_dataset(name, data=seq) 
+                                        tx.attrs[cell_type] = self.counts[gene][transcript].unspliced / self.counts[gene][transcript].spliced
+                                    else:
+                                        assert(cell_type not in f[name].attrs)
+                                        f[name].attrs[cell_type] = self.counts[gene][transcript].unspliced / self.counts[gene][transcript].spliced
+
+                                        
+                                except NonCoding:
+                                    continue
+
+
+                            if return_intron_length:
+                                self.gammas.append([
+                                        chrom, 
+                                        gene_name,
+                                        transcript_name,
+                                        self.counts[gene][transcript].spliced,
+                                        self.counts[gene][transcript].unspliced,
+                                        self.counts[gene][transcript].spliced / self.counts[gene][transcript].unspliced,
+                                        self.lengths[gene][transcript].total_intron_length])
+                                self.gdf = pd.DataFrame(self.gammas, 
+                                       columns = ['chr', 'gene', 'transcript', 'spliced', 'unspliced', 'gamma', 'total_intron_length'])
+                                self.gdf.name = os.path.splitext(os.path.basename(self.bam.filename.decode()))[0] 
+
+                            else: 
+                                self.gammas.append([
+                                        chrom, 
+                                        gene_name,
+                                        transcript_name,
+                                        self.counts[gene][transcript].spliced,
+                                        self.counts[gene][transcript].unspliced,
+                                       self.counts[gene][transcript].spliced / self.counts[gene][transcript].unspliced])
+                                self.gdf = pd.DataFrame(self.gammas, 
+                                       columns = ['chr', 'gene', 'transcript', 'spliced', 'unspliced', 'gamma'])
+                                self.gdf.name = os.path.splitext(os.path.basename(self.bam.filename.decode()))[0] 
 
 
     def write(self, path):
@@ -268,8 +355,6 @@ class reads:
             except KeyError:
                 continue
         return hotann
-
-
 
 
 

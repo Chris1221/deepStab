@@ -1,0 +1,14 @@
+README.md
+setup.py
+deepstab/__init__.py
+deepstab/chunk.py
+deepstab/filter.py
+deepstab/process.py
+deepstab/reads.py
+deepstab/utils.py
+deepstab/utr.py
+deepstab.egg-info/PKG-INFO
+deepstab.egg-info/SOURCES.txt
+deepstab.egg-info/dependency_links.txt
+deepstab.egg-info/requires.txt
+deepstab.egg-info/top_level.txt

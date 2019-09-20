@@ -1,0 +1,7 @@
+numpy
+matplotlib
+pysam
+click
+gffutils
+pyfaidx
+tqdm

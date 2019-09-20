@@ -32,7 +32,6 @@ def process_bam(db_file, gtf, fasta, dset, bam=None, bamlist=None, out='gamma_an
             read = deepstab.reads(bam_file)
 
             fa = Fasta(fasta)
-
             #log.info("Starting the main counting loop")
             # This is just the number from the grep.
             length = len(list(db.features_of_type('gene')))
@@ -44,11 +43,11 @@ def process_bam(db_file, gtf, fasta, dset, bam=None, bamlist=None, out='gamma_an
             logger.info("Adding in the UTRs and calculating gamma")
             read.add_utr_and_gamma(db, dset, fa, return_intron_length = intron_lengths)
             read.write(out)
-            gdf = read.gdf
+            #gdf = read.gdf
         else:
            gdf = read_csv(out, sep = "\t") 
 
-        input_data = deepstab.tf_input(gdf, dset)
+        #input_data = deepstab.tf_input(gdf, dset)
         #input_data.save_by_chr(dset)
 
     elif bam is None and bamlist is not None:
